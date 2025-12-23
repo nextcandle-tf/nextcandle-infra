@@ -1,0 +1,81 @@
+# =============================================================================
+# Promtail 설정 - Docker Swarm 컨테이너 로그 수집
+# =============================================================================
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # ---------------------------------------------------------------------------
+  # Docker 컨테이너 로그 수집
+  # ---------------------------------------------------------------------------
+  - job_name: docker
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: docker
+          __path__: /var/lib/docker/containers/*/*-json.log
+
+    pipeline_stages:
+      # JSON 로그 파싱
+      - json:
+          expressions:
+            log: log
+            stream: stream
+            time: time
+
+      # 타임스탬프 설정
+      - timestamp:
+          source: time
+          format: RFC3339Nano
+
+      # 로그 라인 추출
+      - output:
+          source: log
+
+    # Docker 메타데이터 라벨 추가
+    relabel_configs:
+      # 컨테이너 ID 추출
+      - source_labels: ['__path__']
+        regex: '/var/lib/docker/containers/([a-f0-9]+)/.*'
+        target_label: 'container_id'
+        replacement: '$1'
+
+  # ---------------------------------------------------------------------------
+  # Docker Swarm 서비스 로그 (docker service logs와 동일)
+  # ---------------------------------------------------------------------------
+  - job_name: swarm
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+
+    relabel_configs:
+      # 컨테이너 이름을 라벨로
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+
+      # 서비스 이름 (Swarm)
+      - source_labels: ['__meta_docker_container_label_com_docker_swarm_service_name']
+        target_label: 'service'
+
+      # 스택 이름 (Swarm)
+      - source_labels: ['__meta_docker_container_label_com_docker_stack_namespace']
+        target_label: 'stack'
+
+      # 이미지 이름
+      - source_labels: ['__meta_docker_container_image']
+        target_label: 'image'
+
+      # 서비스가 있는 컨테이너만 수집 (Swarm 서비스)
+      - source_labels: ['__meta_docker_container_label_com_docker_swarm_service_name']
+        regex: '.+'
+        action: keep

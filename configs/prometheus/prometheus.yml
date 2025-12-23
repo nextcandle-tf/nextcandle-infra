@@ -1,0 +1,88 @@
+# =============================================================================
+# Prometheus 설정
+# =============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# ---------------------------------------------------------------------------
+# 스크래핑 대상
+# ---------------------------------------------------------------------------
+scrape_configs:
+  # Prometheus 자체 메트릭
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Traefik 메트릭
+  - job_name: 'traefik'
+    static_configs:
+      - targets: ['traefik:8080']
+
+  # MinIO 메트릭
+  - job_name: 'minio'
+    metrics_path: /minio/v2/metrics/cluster
+    static_configs:
+      - targets: ['minio:9000']
+
+  # ---------------------------------------------------------------------------
+  # Redis Exporter 메트릭
+  # ---------------------------------------------------------------------------
+  - job_name: 'redis'
+    dns_sd_configs:
+      - names:
+          - 'tasks.shared_redis-exporter'
+        type: 'A'
+        port: 9121
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.+):.*'
+        replacement: '$1'
+
+  # ---------------------------------------------------------------------------
+  # Auth 서비스 메트릭
+  # ---------------------------------------------------------------------------
+  - job_name: 'auth'
+    dns_sd_configs:
+      - names:
+          - 'tasks.dev_auth'
+        type: 'A'
+        port: 3000
+    metrics_path: /metrics
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.+):.*'
+        replacement: '$1'
+
+  # ---------------------------------------------------------------------------
+  # cAdvisor - 컨테이너 메트릭 (Docker Swarm global mode)
+  # ---------------------------------------------------------------------------
+  - job_name: 'cadvisor'
+    dns_sd_configs:
+      - names:
+          - 'tasks.shared_cadvisor'
+        type: 'A'
+        port: 8080
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.+):.*'
+        replacement: '$1'
+
+  # ---------------------------------------------------------------------------
+  # node-exporter - 호스트 시스템 메트릭 (Docker Swarm global mode)
+  # ---------------------------------------------------------------------------
+  - job_name: 'node-exporter'
+    dns_sd_configs:
+      - names:
+          - 'tasks.shared_node-exporter'
+        type: 'A'
+        port: 9100
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.+):.*'
+        replacement: '$1'

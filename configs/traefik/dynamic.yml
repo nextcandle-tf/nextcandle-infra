@@ -1,0 +1,53 @@
+# =============================================================================
+# Traefik 동적 설정
+# =============================================================================
+# 미들웨어, TLS 설정 등 런타임에 변경 가능한 설정
+# =============================================================================
+
+http:
+  # ---------------------------------------------------------------------------
+  # 미들웨어 정의
+  # ---------------------------------------------------------------------------
+  middlewares:
+    # 보안 헤더 추가
+    security-headers:
+      headers:
+        frameDeny: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+
+    # 압축
+    compress:
+      compress: {}
+
+    # Rate Limiting
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1s
+
+    # 기본 인증 (대시보드용)
+    auth:
+      basicAuth:
+        users:
+          # admin:admin (htpasswd -nb admin admin)
+          # 프로덕션에서는 반드시 변경할 것
+          - "admin:$apr1$ruca84Hq$mbjdMZBAG.KWn7vfN/Sng1"
+
+  # ---------------------------------------------------------------------------
+  # 라우터 체인 (공통 미들웨어)
+  # ---------------------------------------------------------------------------
+  routers:
+    # Traefik 대시보드 (로컬 전용)
+    dashboard:
+      rule: "Host(`traefik.localhost`)"
+      service: api@internal
+      entryPoints:
+        - web
+      middlewares:
+        - auth
