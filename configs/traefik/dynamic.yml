@@ -31,13 +31,10 @@ http:
         burst: 50
         period: 1s
 
-    # 기본 인증 (대시보드용)
+    # 기본 인증 (대시보드용) - Docker Secret 사용
     auth:
       basicAuth:
-        users:
-          # admin:admin (htpasswd -nb admin admin)
-          # 프로덕션에서는 반드시 변경할 것
-          - "admin:$apr1$ruca84Hq$mbjdMZBAG.KWn7vfN/Sng1"
+        usersFile: /run/secrets/traefik_dashboard_auth
 
   # ---------------------------------------------------------------------------
   # 라우터 체인 (공통 미들웨어)

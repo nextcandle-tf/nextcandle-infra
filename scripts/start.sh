@@ -34,6 +34,13 @@ check_dependencies() {
         log_error "docker가 설치되어 있지 않습니다."
         exit 1
     fi
+
+    # Docker 소켓 접근 권한 확인
+    if ! docker info &> /dev/null; then
+        log_error "Docker에 접근할 수 없습니다."
+        log_info "해결 방법: sudo usermod -aG docker \$USER && newgrp docker"
+        exit 1
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -50,6 +57,18 @@ get_yaml_value() {
 # ---------------------------------------------------------------------------
 generate_password() {
     openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16
+}
+
+# ---------------------------------------------------------------------------
+# htpasswd 형식 생성 (Apache MD5)
+# ---------------------------------------------------------------------------
+generate_htpasswd() {
+    local user=$1
+    local pass=$2
+    # OpenSSL로 Apache MD5 해시 생성
+    local salt=$(openssl rand -base64 8 | tr -dc 'a-zA-Z0-9' | head -c 8)
+    local hash=$(openssl passwd -apr1 -salt "$salt" "$pass")
+    echo "${user}:${hash}"
 }
 
 # ---------------------------------------------------------------------------
@@ -83,6 +102,45 @@ create_networks() {
         docker network create --driver overlay --attachable traefik-public
         log_success "traefik-public 네트워크 생성됨"
     fi
+}
+
+# ---------------------------------------------------------------------------
+# 데이터 디렉토리 생성
+# ---------------------------------------------------------------------------
+create_data_directories() {
+    log_info "데이터 디렉토리 확인 중..."
+
+    local data_dir="$SWARM_DIR/.data"
+    local dirs=(
+        "dev/postgres"
+        "dev/redis"
+        "stg/postgres"
+        "stg/redis"
+        "prod/postgres"
+        "prod/redis"
+        "minio"
+        "prometheus"
+        "grafana"
+        "n8n"
+        "loki"
+        "promtail"
+    )
+
+    for dir in "${dirs[@]}"; do
+        mkdir -p "$data_dir/$dir"
+    done
+
+    # .gitignore 생성
+    if [ ! -f "$data_dir/.gitignore" ]; then
+        cat > "$data_dir/.gitignore" << 'EOF'
+# Ignore all data files
+*
+# But keep this .gitignore
+!.gitignore
+EOF
+    fi
+
+    log_success "데이터 디렉토리 준비 완료: $data_dir"
 }
 
 # ---------------------------------------------------------------------------
@@ -157,8 +215,15 @@ grafana:
 # n8n (공유)
 # ---------------------------------------------------------------------------
 n8n:
-  user: m16khb
+  user: admin
   password: "$(generate_password)"
+
+# ---------------------------------------------------------------------------
+# Traefik Dashboard
+# ---------------------------------------------------------------------------
+traefik:
+  dashboard_user: admin
+  dashboard_password: "$(generate_password)"
 EOF
         chmod 600 "$secrets_file"
         generated_new=true
@@ -192,6 +257,9 @@ EOF
     # n8n (공유)
     create_secret_from_yaml "n8n_user" "n8n.user"
     create_secret_from_yaml "n8n_password" "n8n.password"
+
+    # Traefik Dashboard (htpasswd 형식)
+    create_traefik_auth_secret
 
     if [ "$generated_new" = true ]; then
         echo ""
@@ -229,6 +297,30 @@ create_secret_from_yaml() {
     # Secret 생성
     echo "$value" | docker secret create "$secret_name" - > /dev/null 2>&1
     log_success "$secret_name Secret 생성됨"
+}
+
+# Traefik Dashboard Auth Secret 생성 (htpasswd 형식)
+create_traefik_auth_secret() {
+    local secret_name="traefik_dashboard_auth"
+    local secrets_file="$SWARM_DIR/secrets/secrets.yml"
+
+    # 이미 존재하면 스킵
+    if docker secret ls --format '{{.Name}}' | grep -q "^${secret_name}$"; then
+        return 0
+    fi
+
+    # YAML에서 사용자/비밀번호 추출
+    local user=$(get_yaml_value "$secrets_file" "traefik.dashboard_user")
+    local pass=$(get_yaml_value "$secrets_file" "traefik.dashboard_password")
+
+    if [ -z "$user" ] || [ -z "$pass" ]; then
+        log_warn "$secret_name: traefik 설정 누락 (secrets.yml 수정 필요)"
+        return 0
+    fi
+
+    # htpasswd 형식으로 Secret 생성
+    generate_htpasswd "$user" "$pass" | docker secret create "$secret_name" - > /dev/null 2>&1
+    log_success "$secret_name Secret 생성됨 (htpasswd 형식)"
 }
 
 # ---------------------------------------------------------------------------
@@ -320,31 +412,22 @@ wait_for_services() {
     echo ""
     echo "접근 정보:"
     echo "  - Traefik Dashboard: http://traefik.localhost:8080"
-    echo "  - Stg Web:           http://stg.nextcandle.io"
-    echo "  - Prod Web:          http://www.nextcandle.io"
+    echo "  - Prometheus:        http://prometheus.localhost (로컬만)"
     echo ""
-    echo "공유 서비스:"
-    echo "  - n8n:               http://n8n.nextcandle.io"
-    echo "  - MinIO Console:     http://localhost:9001"
-    echo "  - Grafana:           http://localhost:23000"
-    echo "  - Prometheus:        http://localhost:9090"
+    echo "공유 서비스 (Cloudflare Tunnel 경유):"
+    echo "  - n8n:               https://n8n.nextcandle.io"
+    echo "  - MinIO Console:     https://minio.nextcandle.io"
+    echo "  - MinIO API:         https://s3.nextcandle.io"
+    echo "  - Grafana:           https://grafana.nextcandle.io"
     echo ""
-    echo "모니터링:"
-    echo "  - cAdvisor:          http://localhost:8081"
-    echo "  - node-exporter:     http://localhost:9100/metrics"
-    echo "  - Redis exporter:    http://localhost:9121/metrics"
-    echo "  - Auth Metrics:      http://localhost:3000/metrics"
+    echo "데이터베이스 (내부 네트워크):"
+    echo "  - PostgreSQL Dev:    dev_postgres:5432 (localhost:5432)"
+    echo "  - PostgreSQL Stg:    stg_postgres:5432 (localhost:5433)"
+    echo "  - PostgreSQL Prod:   prod_postgres:5432 (localhost:5434)"
+    echo "  - Redis Dev:         dev_redis:6379 (localhost:6379)"
     echo ""
-    echo "데이터베이스:"
-    echo "  - PostgreSQL Dev:    localhost:5432"
-    echo "  - PostgreSQL Stg:    localhost:5433"
-    echo "  - PostgreSQL Prod:   localhost:5434"
-    echo ""
-    echo "  - Redis Dev:         localhost:6379"
-    echo "  - Redis Stg:         localhost:6380"
-    echo "  - Redis Prod:        localhost:6381"
-    echo ""
-    echo "Secret 정보: secrets/secrets.yml (n8n 계정: m16khb)"
+    echo "데이터 저장: .data/"
+    echo "Secret 정보: secrets/secrets.yml"
 }
 
 # ---------------------------------------------------------------------------
@@ -360,6 +443,7 @@ main() {
     check_dependencies
     init_swarm
     create_networks
+    create_data_directories
     create_secrets
     deploy_stacks "${1:-all}"
     wait_for_services

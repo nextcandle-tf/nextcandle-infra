@@ -61,6 +61,9 @@ services:
       - traefik-certs:/letsencrypt
       - ./configs/traefik:/etc/traefik/dynamic:ro
 
+    secrets:
+      - traefik_dashboard_auth
+
     networks:
       - traefik-public
 
@@ -91,7 +94,7 @@ services:
   # Cloudflare Tunnel - Zero Trust 외부 접근
   # ---------------------------------------------------------------------------
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2024.12.2
     command:
       - tunnel
       - --no-autoupdate
@@ -124,3 +127,7 @@ networks:
 volumes:
   traefik-certs:
     driver: local
+
+secrets:
+  traefik_dashboard_auth:
+    external: true

@@ -38,6 +38,9 @@ remove_stacks() {
         core)
             docker stack rm core 2>/dev/null || true
             ;;
+        runner)
+            docker stack rm runner 2>/dev/null || true
+            ;;
         all)
             docker stack rm dev 2>/dev/null || true
             docker stack rm stg 2>/dev/null || true
@@ -47,7 +50,7 @@ remove_stacks() {
             ;;
         *)
             log_warn "알 수 없는 환경: $1"
-            echo "사용법: $0 [dev|stg|prod|shared|core|all]"
+            echo "사용법: $0 [dev|stg|prod|shared|core|runner|all]"
             exit 1
             ;;
     esac

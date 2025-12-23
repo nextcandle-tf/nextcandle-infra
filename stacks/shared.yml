@@ -4,40 +4,38 @@
 # 환경 간 공유 서비스: MinIO (S3 호환) + 모니터링 스택
 #
 # 사용법:
+#   cd /path/to/nextcandle-infra  # 중요: 프로젝트 루트에서 실행
 #   docker stack deploy -c stacks/shared.yml shared
 #
-# 접근:
-#   - MinIO API: localhost:9000
-#   - MinIO Console: localhost:9001
-#   - Grafana: localhost:23000
-#   - Prometheus: localhost:9090
+# 접근 (Traefik 경유):
+#   - MinIO API: s3.nextcandle.io
+#   - MinIO Console: minio.nextcandle.io
+#   - Grafana: grafana.nextcandle.io
+#   - Prometheus: prometheus.localhost (로컬만)
+#   - n8n: n8n.nextcandle.io
 #
 # 참고:
 #   - GitHub Runner는 runner.yml로 분리됨 (토큰 만료 문제 해결)
+#   - 상대 경로(../) 사용으로 프로젝트 루트에서 배포 필요
 # =============================================================================
 
 services:
   # ---------------------------------------------------------------------------
   # MinIO - S3 호환 오브젝트 스토리지
   # ---------------------------------------------------------------------------
+  # 주의: MinIO Docker Hub 이미지는 2025.10 이후 업데이트 중단
+  # 대안: bitnami/minio 또는 cgr.dev/chainguard/minio
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
       MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
     volumes:
-      - minio-data:/data
+      - ../.data/minio:/data
     networks:
       - internal
       - traefik-public
-    ports:
-      - target: 9000
-        published: 9000
-        mode: host
-      - target: 9001
-        published: 9001
-        mode: host
     secrets:
       - minio_root_user
       - minio_root_password
@@ -78,22 +76,18 @@ services:
   # Prometheus - 메트릭 수집
   # ---------------------------------------------------------------------------
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.1.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=15d
       - --web.enable-lifecycle
     volumes:
-      - prometheus-data:/prometheus
+      - ../.data/prometheus:/prometheus
       - ../configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     networks:
       - internal
       - traefik-public
-    ports:
-      - target: 9090
-        published: 9090
-        mode: host
     deploy:
       mode: replicated
       replicas: 1
@@ -118,20 +112,16 @@ services:
   # Grafana - 모니터링 대시보드
   # ---------------------------------------------------------------------------
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:12.3.1
     environment:
       GF_SECURITY_ADMIN_USER__FILE: /run/secrets/grafana_admin_user
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
     volumes:
-      - grafana-data:/var/lib/grafana
+      - ../.data/grafana:/var/lib/grafana
       - ../configs/grafana/provisioning:/etc/grafana/provisioning:ro
     networks:
       - internal
       - traefik-public
-    ports:
-      - target: 3000
-        published: 23000
-        mode: host
     secrets:
       - grafana_admin_user
       - grafana_admin_password
@@ -159,11 +149,15 @@ services:
   # n8n - Workflow Automation (공유)
   # ---------------------------------------------------------------------------
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n:2.1.2
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        export N8N_BASIC_AUTH_USER=$$(cat /run/secrets/n8n_user)
+        export N8N_BASIC_AUTH_PASSWORD=$$(cat /run/secrets/n8n_password)
+        exec n8n
     environment:
       - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=m16khb
-      - N8N_BASIC_AUTH_PASSWORD_FILE=/run/secrets/n8n_password
       - N8N_HOST=n8n.nextcandle.io
       - N8N_PORT=5678
       - N8N_PROTOCOL=https
@@ -171,11 +165,12 @@ services:
       - GENERIC_TIMEZONE=Asia/Seoul
       - N8N_LOG_LEVEL=info
     volumes:
-      - n8n-data:/home/node/.n8n
+      - ../.data/n8n:/home/node/.n8n
     networks:
       - internal
       - traefik-public
     secrets:
+      - n8n_user
       - n8n_password
     deploy:
       mode: replicated
@@ -197,64 +192,20 @@ services:
         condition: on-failure
         delay: 5s
     healthcheck:
-      test:
-        [
-          'CMD-SHELL',
-          'wget --spider -q http://localhost:5678/healthz || exit 1',
-        ]
+      test: ['CMD-SHELL', 'wget --spider -q http://localhost:5678/healthz || exit 1']
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
 
   # ---------------------------------------------------------------------------
-  # Embeddings - 로컬 임베딩 서버 (FastAPI + SentenceTransformers)
-  # ---------------------------------------------------------------------------
-  embeddings:
-    image: embeddings:latest
-    volumes:
-      - embeddings-data:/app/.cache
-    networks:
-      - internal
-      - traefik-public
-    ports:
-      - target: 8080
-        published: 8082
-        mode: host
-    deploy:
-      mode: replicated
-      replicas: 1
-      labels:
-        - traefik.enable=true
-        - traefik.http.routers.embeddings.rule=Host(`embeddings.nextcandle.io`)
-        - traefik.http.routers.embeddings.entrypoints=web
-        - traefik.http.services.embeddings.loadbalancer.server.port=8080
-        - traefik.docker.network=traefik-public
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 4096M
-        reservations:
-          cpus: '0.50'
-          memory: 1024M
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-    healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:8080/health']
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 180s
-
-  # ---------------------------------------------------------------------------
   # Loki - 로그 수집 (선택)
   # ---------------------------------------------------------------------------
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.6.3
     command: -config.file=/etc/loki/loki-config.yml
     volumes:
-      - loki-data:/loki
+      - ../.data/loki:/loki
       - ../configs/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
     networks:
       - internal
@@ -278,12 +229,13 @@ services:
   # Docker Swarm 서비스 로그를 수집하여 Loki로 전송합니다.
   # ---------------------------------------------------------------------------
   promtail:
-    image: grafana/promtail:latest
+    image: grafana/promtail:3.6.3
     command: -config.file=/etc/promtail/promtail-config.yml
     volumes:
       - ../configs/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ../.data/promtail:/promtail
     networks:
       - internal
     deploy:
@@ -314,10 +266,6 @@ services:
         /redis_exporter --redis.addr=redis://dev_redis:6379
     networks:
       - internal
-    ports:
-      - target: 9121
-        published: 9121
-        mode: host
     secrets:
       - redis_password
     deploy:
@@ -359,10 +307,6 @@ services:
       - /var/lib/docker/:/var/lib/docker:ro
     networks:
       - internal
-    ports:
-      - target: 8080
-        published: 8081
-        mode: host
     deploy:
       mode: global
       resources:
@@ -401,10 +345,6 @@ services:
       - /:/rootfs:ro
     networks:
       - internal
-    ports:
-      - target: 9100
-        published: 9100
-        mode: host
     deploy:
       mode: global
       resources:
@@ -430,20 +370,6 @@ networks:
   traefik-public:
     external: true
 
-volumes:
-  minio-data:
-    driver: local
-  prometheus-data:
-    driver: local
-  grafana-data:
-    driver: local
-  loki-data:
-    driver: local
-  n8n-data:
-    driver: local
-  embeddings-data:
-    driver: local
-
 secrets:
   minio_root_user:
     external: true
@@ -452,6 +378,8 @@ secrets:
   grafana_admin_user:
     external: true
   grafana_admin_password:
+    external: true
+  n8n_user:
     external: true
   n8n_password:
     external: true

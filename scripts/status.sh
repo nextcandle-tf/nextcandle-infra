@@ -73,18 +73,26 @@ check_networks() {
 }
 
 # ---------------------------------------------------------------------------
-# 볼륨 상태
+# 데이터 디렉토리 상태
 # ---------------------------------------------------------------------------
-check_volumes() {
+check_data_dirs() {
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${CYAN} 볼륨${NC}"
+    echo -e "${CYAN} 데이터 디렉토리${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    docker volume ls --format "table {{.Name}}\t{{.Driver}}"
+
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local data_dir="$(dirname "$script_dir")/.data"
+
+    if [ -d "$data_dir" ]; then
+        du -sh "$data_dir"/* 2>/dev/null | sort -hr
+    else
+        echo -e "${YELLOW}데이터 디렉토리가 없습니다: $data_dir${NC}"
+    fi
 }
 
 # ---------------------------------------------------------------------------
-# 헬스 체크
+# 헬스 체크 (Docker exec로 내부 상태 확인)
 # ---------------------------------------------------------------------------
 health_check() {
     echo ""
@@ -92,74 +100,90 @@ health_check() {
     echo -e "${CYAN} 헬스 체크${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-    # Traefik
+    # Traefik (포트 노출됨)
     if curl -s http://localhost:8080/ping > /dev/null 2>&1; then
         echo -e "${GREEN}✓ Traefik${NC} - 정상"
     else
         echo -e "${YELLOW}○ Traefik${NC} - 응답 없음"
     fi
 
-    # Auth Server
-    if curl -s http://localhost:3000/api/v1/health > /dev/null 2>&1; then
-        echo -e "${GREEN}✓ Auth Server${NC} - 정상"
+    # Cloudflared (서비스 상태로 확인)
+    local cf_container=$(docker ps -q -f name=core_cloudflared 2>/dev/null)
+    if [ -n "$cf_container" ]; then
+        echo -e "${GREEN}✓ Cloudflared${NC} - 실행 중"
     else
-        echo -e "${YELLOW}○ Auth Server${NC} - 응답 없음"
+        echo -e "${YELLOW}○ Cloudflared${NC} - 실행 안됨"
     fi
 
-    # PostgreSQL Dev
-    if docker exec $(docker ps -q -f name=dev_postgres) pg_isready > /dev/null 2>&1; then
+    # PostgreSQL Dev (포트 노출됨)
+    local pg_dev=$(docker ps -q -f name=dev_postgres 2>/dev/null)
+    if [ -n "$pg_dev" ] && docker exec $pg_dev pg_isready > /dev/null 2>&1; then
         echo -e "${GREEN}✓ PostgreSQL (dev)${NC} - 정상"
     else
         echo -e "${YELLOW}○ PostgreSQL (dev)${NC} - 응답 없음"
     fi
 
-    # Redis Dev
-    if docker exec $(docker ps -q -f name=dev_redis) redis-cli ping > /dev/null 2>&1; then
+    # PostgreSQL Stg
+    local pg_stg=$(docker ps -q -f name=stg_postgres 2>/dev/null)
+    if [ -n "$pg_stg" ] && docker exec $pg_stg pg_isready > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ PostgreSQL (stg)${NC} - 정상"
+    else
+        echo -e "${YELLOW}○ PostgreSQL (stg)${NC} - 응답 없음"
+    fi
+
+    # PostgreSQL Prod
+    local pg_prod=$(docker ps -q -f name=prod_postgres 2>/dev/null)
+    if [ -n "$pg_prod" ] && docker exec $pg_prod pg_isready > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ PostgreSQL (prod)${NC} - 정상"
+    else
+        echo -e "${YELLOW}○ PostgreSQL (prod)${NC} - 응답 없음"
+    fi
+
+    # Redis Dev (포트 노출됨)
+    local redis_dev=$(docker ps -q -f name=dev_redis 2>/dev/null)
+    if [ -n "$redis_dev" ] && docker exec $redis_dev redis-cli ping > /dev/null 2>&1; then
         echo -e "${GREEN}✓ Redis (dev)${NC} - 정상"
     else
         echo -e "${YELLOW}○ Redis (dev)${NC} - 응답 없음"
     fi
 
-    # MinIO
-    if curl -s http://localhost:9000/minio/health/live > /dev/null 2>&1; then
+    # MinIO (docker exec로 확인)
+    local minio=$(docker ps -q -f name=shared_minio 2>/dev/null)
+    if [ -n "$minio" ] && docker exec $minio mc ready local > /dev/null 2>&1; then
         echo -e "${GREEN}✓ MinIO${NC} - 정상"
     else
         echo -e "${YELLOW}○ MinIO${NC} - 응답 없음"
     fi
 
-    # Prometheus
-    if curl -s http://localhost:9090/-/healthy > /dev/null 2>&1; then
+    # Prometheus (Traefik 경유)
+    if curl -s http://prometheus.localhost/-/healthy > /dev/null 2>&1; then
         echo -e "${GREEN}✓ Prometheus${NC} - 정상"
     else
         echo -e "${YELLOW}○ Prometheus${NC} - 응답 없음"
     fi
 
-    # Grafana
-    if curl -s http://localhost:23000/api/health > /dev/null 2>&1; then
-        echo -e "${GREEN}✓ Grafana${NC} - 정상"
+    # Grafana (컨테이너 상태로 확인)
+    local grafana=$(docker ps -q -f name=shared_grafana 2>/dev/null)
+    if [ -n "$grafana" ]; then
+        echo -e "${GREEN}✓ Grafana${NC} - 실행 중"
     else
-        echo -e "${YELLOW}○ Grafana${NC} - 응답 없음"
+        echo -e "${YELLOW}○ Grafana${NC} - 실행 안됨"
     fi
 
-    # cAdvisor
-    if curl -s http://localhost:8081/healthz > /dev/null 2>&1; then
-        echo -e "${GREEN}✓ cAdvisor${NC} - 정상"
+    # n8n (컨테이너 상태로 확인)
+    local n8n=$(docker ps -q -f name=shared_n8n 2>/dev/null)
+    if [ -n "$n8n" ]; then
+        echo -e "${GREEN}✓ n8n${NC} - 실행 중"
     else
-        echo -e "${YELLOW}○ cAdvisor${NC} - 응답 없음"
+        echo -e "${YELLOW}○ n8n${NC} - 실행 안됨"
     fi
 
-    # node-exporter
-    if curl -s http://localhost:9100/metrics > /dev/null 2>&1; then
-        echo -e "${GREEN}✓ node-exporter${NC} - 정상"
+    # Loki (컨테이너 상태로 확인)
+    local loki=$(docker ps -q -f name=shared_loki 2>/dev/null)
+    if [ -n "$loki" ]; then
+        echo -e "${GREEN}✓ Loki${NC} - 실행 중"
     else
-        echo -e "${YELLOW}○ node-exporter${NC} - 응답 없음"
-    fi
-
-    # Redis exporter
-    if curl -s http://localhost:9121/health > /dev/null 2>&1; then
-        echo -e "${GREEN}✓ Redis exporter${NC} - 정상"
-    else
-        echo -e "${YELLOW}○ Redis exporter${NC} - 응답 없음"
+        echo -e "${YELLOW}○ Loki${NC} - 실행 안됨"
     fi
 }
 
@@ -179,7 +203,7 @@ main() {
     if [ "$1" == "-v" ] || [ "$1" == "--verbose" ]; then
         check_containers
         check_networks
-        check_volumes
+        check_data_dirs
     fi
 
     health_check

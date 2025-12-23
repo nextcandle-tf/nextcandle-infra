@@ -23,7 +23,7 @@ services:
       POSTGRES_USER_FILE: /run/secrets/postgres_user
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - ../.data/prod/postgres:/var/lib/postgresql/data
     configs:
       - source: postgres_config
         target: /etc/postgresql/postgresql.conf
@@ -78,7 +78,7 @@ services:
           --appendonly yes \
           --appendfsync everysec
     volumes:
-      - redis-data:/data
+      - ../.data/prod/redis:/data
     networks:
       - internal
       - traefik-public
@@ -108,41 +108,11 @@ services:
       timeout: 5s
       retries: 5
 
-  # ---------------------------------------------------------------------------
-  # Web - Infrastructure Dashboard
-  # ---------------------------------------------------------------------------
-  web:
-    image: nginx:alpine
-    volumes:
-      - /Users/m16khb/Workspace/infrastructure/swarm/html:/usr/share/nginx/html:ro
-    networks:
-      - internal
-      - traefik-public
-    deploy:
-      mode: replicated
-      replicas: 1
-      labels:
-        - traefik.enable=true
-        - traefik.http.routers.prod-web.rule=Host(`www.nextcandle.io`) || Host(`nextcandle.io`)
-        - traefik.http.routers.prod-web.entrypoints=web
-        - traefik.http.services.prod-web.loadbalancer.server.port=80
-        - traefik.docker.network=traefik-public
-      resources:
-        limits:
-          cpus: '0.20'
-          memory: 128M
-
 networks:
   internal:
     driver: overlay
   traefik-public:
     external: true
-
-volumes:
-  postgres-data:
-    driver: local
-  redis-data:
-    driver: local
 
 configs:
   postgres_config:
