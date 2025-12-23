@@ -1,0 +1,461 @@
+# =============================================================================
+# Shared Services Stack
+# =============================================================================
+# 환경 간 공유 서비스: MinIO (S3 호환) + 모니터링 스택
+#
+# 사용법:
+#   docker stack deploy -c stacks/shared.yml shared
+#
+# 접근:
+#   - MinIO API: localhost:9000
+#   - MinIO Console: localhost:9001
+#   - Grafana: localhost:23000
+#   - Prometheus: localhost:9090
+#
+# 참고:
+#   - GitHub Runner는 runner.yml로 분리됨 (토큰 만료 문제 해결)
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # MinIO - S3 호환 오브젝트 스토리지
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+    volumes:
+      - minio-data:/data
+    networks:
+      - internal
+      - traefik-public
+    ports:
+      - target: 9000
+        published: 9000
+        mode: host
+      - target: 9001
+        published: 9001
+        mode: host
+    secrets:
+      - minio_root_user
+      - minio_root_password
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - traefik.enable=true
+        # MinIO API
+        - traefik.http.routers.minio-api.rule=Host(`s3.nextcandle.io`)
+        - traefik.http.routers.minio-api.entrypoints=web
+        - traefik.http.routers.minio-api.service=minio-api
+        - traefik.http.services.minio-api.loadbalancer.server.port=9000
+        # MinIO Console
+        - traefik.http.routers.minio-console.rule=Host(`minio.nextcandle.io`)
+        - traefik.http.routers.minio-console.entrypoints=web
+        - traefik.http.routers.minio-console.service=minio-console
+        - traefik.http.services.minio-console.loadbalancer.server.port=9001
+        - traefik.docker.network=traefik-public
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Prometheus - 메트릭 수집
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - prometheus-data:/prometheus
+      - ../configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - internal
+      - traefik-public
+    ports:
+      - target: 9090
+        published: 9090
+        mode: host
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.prometheus.rule=Host(`prometheus.localhost`)
+        - traefik.http.routers.prometheus.entrypoints=web
+        - traefik.http.services.prometheus.loadbalancer.server.port=9090
+        - traefik.docker.network=traefik-public
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+  # ---------------------------------------------------------------------------
+  # Grafana - 모니터링 대시보드
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER__FILE: /run/secrets/grafana_admin_user
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../configs/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - internal
+      - traefik-public
+    ports:
+      - target: 3000
+        published: 23000
+        mode: host
+    secrets:
+      - grafana_admin_user
+      - grafana_admin_password
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.grafana.rule=Host(`grafana.nextcandle.io`)
+        - traefik.http.routers.grafana.entrypoints=web
+        - traefik.http.services.grafana.loadbalancer.server.port=3000
+        - traefik.docker.network=traefik-public
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+  # ---------------------------------------------------------------------------
+  # n8n - Workflow Automation (공유)
+  # ---------------------------------------------------------------------------
+  n8n:
+    image: n8nio/n8n:latest
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=m16khb
+      - N8N_BASIC_AUTH_PASSWORD_FILE=/run/secrets/n8n_password
+      - N8N_HOST=n8n.nextcandle.io
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://n8n.nextcandle.io
+      - GENERIC_TIMEZONE=Asia/Seoul
+      - N8N_LOG_LEVEL=info
+    volumes:
+      - n8n-data:/home/node/.n8n
+    networks:
+      - internal
+      - traefik-public
+    secrets:
+      - n8n_password
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.n8n.rule=Host(`n8n.nextcandle.io`)
+        - traefik.http.routers.n8n.entrypoints=web
+        - traefik.http.services.n8n.loadbalancer.server.port=5678
+        - traefik.docker.network=traefik-public
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2048M
+        reservations:
+          cpus: '0.50'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'wget --spider -q http://localhost:5678/healthz || exit 1',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Embeddings - 로컬 임베딩 서버 (FastAPI + SentenceTransformers)
+  # ---------------------------------------------------------------------------
+  embeddings:
+    image: embeddings:latest
+    volumes:
+      - embeddings-data:/app/.cache
+    networks:
+      - internal
+      - traefik-public
+    ports:
+      - target: 8080
+        published: 8082
+        mode: host
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.embeddings.rule=Host(`embeddings.nextcandle.io`)
+        - traefik.http.routers.embeddings.entrypoints=web
+        - traefik.http.services.embeddings.loadbalancer.server.port=8080
+        - traefik.docker.network=traefik-public
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4096M
+        reservations:
+          cpus: '0.50'
+          memory: 1024M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8080/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
+
+  # ---------------------------------------------------------------------------
+  # Loki - 로그 수집 (선택)
+  # ---------------------------------------------------------------------------
+  loki:
+    image: grafana/loki:latest
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - loki-data:/loki
+      - ../configs/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+    networks:
+      - internal
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.30'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+  # ---------------------------------------------------------------------------
+  # Promtail - 컨테이너 로그 수집
+  # ---------------------------------------------------------------------------
+  # Docker Swarm 서비스 로그를 수집하여 Loki로 전송합니다.
+  # ---------------------------------------------------------------------------
+  promtail:
+    image: grafana/promtail:latest
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ../configs/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks:
+      - internal
+    deploy:
+      mode: global
+      resources:
+        limits:
+          cpus: '0.20'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+  # ---------------------------------------------------------------------------
+  # Redis Exporter - Dev Redis 메트릭 수집
+  # ---------------------------------------------------------------------------
+  # 현재 dev 환경 Redis만 모니터링합니다.
+  # stg/prod Redis 모니터링이 필요하면 별도 exporter 인스턴스를 추가하세요.
+  # ---------------------------------------------------------------------------
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.66.0-alpine
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        export REDIS_PASSWORD=$$(cat /run/secrets/redis_password)
+        /redis_exporter --redis.addr=redis://dev_redis:6379
+    networks:
+      - internal
+    ports:
+      - target: 9121
+        published: 9121
+        mode: host
+    secrets:
+      - redis_password
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: 64M
+        reservations:
+          cpus: '0.02'
+          memory: 32M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:9121/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # cAdvisor - 컨테이너 메트릭 수집
+  # ---------------------------------------------------------------------------
+  # Docker 컨테이너별 CPU, 메모리, 네트워크, 디스크 I/O 메트릭
+  # global mode: 모든 노드에 자동 배포
+  # ---------------------------------------------------------------------------
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.51.0
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=30s
+      - --max_housekeeping_interval=60s
+    volumes:
+      - /:/rootfs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - internal
+    ports:
+      - target: 8080
+        published: 8081
+        mode: host
+    deploy:
+      mode: global
+      resources:
+        limits:
+          cpus: '0.30'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:8080/healthz']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # node-exporter - 호스트 시스템 메트릭 수집
+  # ---------------------------------------------------------------------------
+  # 호스트 CPU, 메모리, 디스크, 네트워크 메트릭
+  # global mode: 모든 노드에 자동 배포
+  # ---------------------------------------------------------------------------
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - internal
+    ports:
+      - target: 9100
+        published: 9100
+        mode: host
+    deploy:
+      mode: global
+      resources:
+        limits:
+          cpus: '0.20'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:9100/']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  internal:
+    driver: overlay
+  traefik-public:
+    external: true
+
+volumes:
+  minio-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  loki-data:
+    driver: local
+  n8n-data:
+    driver: local
+  embeddings-data:
+    driver: local
+
+secrets:
+  minio_root_user:
+    external: true
+  minio_root_password:
+    external: true
+  grafana_admin_user:
+    external: true
+  grafana_admin_password:
+    external: true
+  n8n_password:
+    external: true
+  # Redis Exporter용 (dev 환경 Redis 전용)
+  redis_password:
+    external: true
+    name: dev_redis_password

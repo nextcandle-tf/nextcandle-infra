@@ -1,0 +1,78 @@
+# =============================================================================
+# GitHub Actions Self-hosted Runner Stack
+# =============================================================================
+# GitHub Runner를 별도 스택으로 분리하여 독립적인 라이프사이클 관리
+#
+# 이유:
+#   - RUNNER_TOKEN은 1시간만 유효
+#   - shared 스택 재배포 시 runner 재시작 → 만료된 토큰으로 등록 실패
+#   - runner 스택 분리로 다른 서비스와 독립적으로 관리
+#
+# 사용법:
+#   docker stack deploy -c stacks/runner.yml runner
+#
+# Runner 설정:
+#   환경 변수 필요: GITHUB_OWNER, RUNNER_TOKEN (Organization-level)
+#
+# Organization-level Runner:
+#   - GITHUB_REPO를 설정하지 않으면 organization 전체에서 사용 가능
+#   - 토큰 발급: GitHub → Organization Settings → Actions → Runners → New self-hosted runner
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # GitHub Actions Self-hosted Runner (Organization-level)
+  # ---------------------------------------------------------------------------
+  # Organization의 모든 repository에서 사용 가능
+  # 사용 전 Runner 이미지 빌드 필요:
+  #   cd services/runner && docker build -t ghcr.io/m16khb/github-runner:latest .
+  # ---------------------------------------------------------------------------
+  github-runner:
+    # 이미지는 개인 계정(m16khb)에서 빌드, Organization(m16khb-org)에서 실행
+    image: ghcr.io/m16khb/github-runner:${RUNNER_VERSION:-latest}
+    environment:
+      GITHUB_OWNER: ${GITHUB_OWNER:-m16khb}
+      # GITHUB_REPO 미설정 시 Organization-level runner로 등록
+      RUNNER_TOKEN: ${RUNNER_TOKEN}
+      RUNNER_NAME: "swarm-runner-{{.Task.Slot}}"
+      RUNNER_LABELS: "self-hosted,Linux,X64,docker-swarm,pnpm"
+    volumes:
+      # Docker-in-Docker를 위한 소켓 마운트
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Runner 작업 디렉토리 (빌드 캐시 등)
+      - runner-work:/home/runner/_work
+    networks:
+      - internal
+      - traefik-public
+    deploy:
+      mode: replicated
+      replicas: ${RUNNER_REPLICAS:-2}
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4096M
+        reservations:
+          cpus: '0.5'
+          memory: 1024M
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 30s
+        order: stop-first
+
+networks:
+  internal:
+    external: true
+    name: shared_internal
+  traefik-public:
+    external: true
+
+volumes:
+  runner-work:
+    driver: local
