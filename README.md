@@ -3,8 +3,15 @@
 Centralized infrastructure configuration and scripts for the NextCandle ecosystem.
 
 ## 📦 Contents
-*   **ecosystem.config.js**: The master PM2 configuration file that orchestrates the `nextcandle-web` and `nextcandle-api` services across Production, Staging, and Development environments.
-*   **scripts/**: Utility & Maintenance scripts (e.g., monitoring, setup).
+- **ecosystem.config.js**: PM2 configuration for all environments.
+- **scripts/**: Utility & maintenance scripts.
+- **db/**: Database configurations and migration scripts.
+- **redis/**: Redis configuration and persistent storage setup.
+- **nginx/**: Reverse proxy and SSL configurations.
+- **promtail/**: Log shipping configuration for Loki.
+- **loki/**: Log aggregation system configuration.
+- **grafana/**: Visualization dashboards for metrics and logs.
+- **n8n/**: Workflow automation and integration configs.
 
 ## 🚀 Usage (PM2)
 This repository is intended to be checked out on the deployment server alongside the other repositories.

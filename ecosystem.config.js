@@ -3,8 +3,8 @@ module.exports = {
     // --- PRODUCTION (Main Branch) ---
     {
       name: 'candle-backend-prod',
-      script: '/home/andy/candle-model/.venv/bin/gunicorn',
-      interpreter: '/home/andy/candle-model/.venv/bin/python3',
+      script: '/home/andy/nextcandle/nextcandle-api/ml/.venv/bin/gunicorn',
+      interpreter: '/home/andy/nextcandle/nextcandle-api/ml/.venv/bin/python3',
       args: '-c gunicorn_config.py -b 0.0.0.0:5000 pattern_api:app',
       cwd: '/home/andy/nextcandle/nextcandle-api',
       instances: 1,
@@ -39,8 +39,8 @@ module.exports = {
     // --- STAGING (Stg Branch) ---
     {
       name: 'candle-backend-stg',
-      script: '/home/andy/candle-model/.venv/bin/gunicorn',
-      interpreter: '/home/andy/candle-model/.venv/bin/python3',
+      script: '/home/andy/nextcandle/nextcandle-api/ml/.venv/bin/gunicorn',
+      interpreter: '/home/andy/nextcandle/nextcandle-api/ml/.venv/bin/python3',
       args: '-c gunicorn_config.py -b 0.0.0.0:5001 pattern_api:app',
       cwd: '/home/andy/nextcandle/nextcandle-api',
       instances: 1,
@@ -75,8 +75,8 @@ module.exports = {
     // --- DEVELOPMENT (Dev Branch) ---
     {
       name: 'candle-backend-dev',
-      script: '/home/andy/candle-model/.venv/bin/gunicorn',
-      interpreter: '/home/andy/candle-model/.venv/bin/python3',
+      script: '/home/andy/nextcandle/nextcandle-api/ml/.venv/bin/gunicorn',
+      interpreter: '/home/andy/nextcandle/nextcandle-api/ml/.venv/bin/python3',
       args: '-c gunicorn_config.py -b 0.0.0.0:5002 --reload pattern_api:app',
       cwd: '/home/andy/nextcandle/nextcandle-api',
       instances: 1,
