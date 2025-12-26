@@ -114,6 +114,7 @@ services:
   grafana:
     image: grafana/grafana:12.3.1
     environment:
+      GF_SERVER_ROOT_URL: https://grafana.nextcandle.io/
       GF_SECURITY_ADMIN_USER__FILE: /run/secrets/grafana_admin_user
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
     volumes:
@@ -149,7 +150,7 @@ services:
   # n8n - Workflow Automation (공유)
   # ---------------------------------------------------------------------------
   n8n:
-    image: n8nio/n8n:2.1.2
+    image: n8nio/n8n:2.1.4
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
