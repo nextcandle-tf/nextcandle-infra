@@ -67,6 +67,23 @@ http:
       middlewares:
         - compress
 
+    # nextcandle-web 프로덕션 환경
+    nextcandle-web-prod:
+      rule: "Host(`nextcandle.io`)"
+      service: nextcandle-web-prod
+      entryPoints:
+        - web
+      middlewares:
+        - compress
+
+    nextcandle-web-prod-www:
+      rule: "Host(`www.nextcandle.io`)"
+      service: nextcandle-web-prod
+      entryPoints:
+        - web
+      middlewares:
+        - compress
+
   # ---------------------------------------------------------------------------
   # 서비스 정의
   # ---------------------------------------------------------------------------
@@ -80,3 +97,8 @@ http:
       loadBalancer:
         servers:
           - url: "http://nextcandle-web-staging:80"
+
+    nextcandle-web-prod:
+      loadBalancer:
+        servers:
+          - url: "http://nextcandle-web-production:80"
