@@ -27,6 +27,12 @@ services:
       - --providers.swarm.exposedByDefault=false
       - --providers.swarm.network=traefik-public
 
+      # Docker 프로바이더 (일반 컨테이너 인식용)
+      - --providers.docker=true
+      - --providers.docker.endpoint=unix:///var/run/docker.sock
+      - --providers.docker.exposedByDefault=false
+      - --providers.docker.network=traefik-public
+
       # 파일 프로바이더 (동적 설정)
       - --providers.file.directory=/etc/traefik/dynamic
       - --providers.file.watch=true

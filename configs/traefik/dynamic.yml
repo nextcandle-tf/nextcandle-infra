@@ -48,3 +48,35 @@ http:
         - web
       middlewares:
         - auth
+
+    # nextcandle-web 개발 환경
+    nextcandle-web-dev:
+      rule: "Host(`dev.nextcandle.io`)"
+      service: nextcandle-web-dev
+      entryPoints:
+        - web
+      middlewares:
+        - compress
+
+    # nextcandle-web 스테이징 환경
+    nextcandle-web-stg:
+      rule: "Host(`stg.nextcandle.io`)"
+      service: nextcandle-web-stg
+      entryPoints:
+        - web
+      middlewares:
+        - compress
+
+  # ---------------------------------------------------------------------------
+  # 서비스 정의
+  # ---------------------------------------------------------------------------
+  services:
+    nextcandle-web-dev:
+      loadBalancer:
+        servers:
+          - url: "http://nextcandle-web-development:80"
+
+    nextcandle-web-stg:
+      loadBalancer:
+        servers:
+          - url: "http://nextcandle-web-staging:80"
